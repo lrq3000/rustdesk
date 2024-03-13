@@ -15,13 +15,14 @@ import 'package:path_provider/path_provider.dart';
 import '../common.dart';
 import '../generated_bridge.dart';
 
-class RgbaFrame extends Struct {
+final class RgbaFrame extends Struct {
   @Uint32()
   external int len;
   external Pointer<Uint8> data;
 }
 
-typedef F3 = Pointer<Uint8> Function(Pointer<Utf8>);
+typedef F3 = Pointer<Uint8> Function(Pointer<Utf8>, int);
+typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 /// FFI wrapper around the native Rust core.
@@ -80,12 +81,12 @@ class PlatformFFI {
   String translate(String name, String locale) =>
       _ffiBind.translate(name: name, locale: locale);
 
-  Uint8List? getRgba(SessionID sessionId, int bufSize) {
+  Uint8List? getRgba(SessionID sessionId, int display, int bufSize) {
     if (_session_get_rgba == null) return null;
     final sessionIdStr = sessionId.toString();
     var a = sessionIdStr.toNativeUtf8();
     try {
-      final buffer = _session_get_rgba!(a);
+      final buffer = _session_get_rgba!(a, display);
       if (buffer == nullptr) {
         return null;
       }
@@ -96,12 +97,16 @@ class PlatformFFI {
     }
   }
 
-  int getRgbaSize(SessionID sessionId) =>
-      _ffiBind.sessionGetRgbaSize(sessionId: sessionId);
-  void nextRgba(SessionID sessionId) =>
-      _ffiBind.sessionNextRgba(sessionId: sessionId);
-  void registerTexture(SessionID sessionId, int ptr) =>
-      _ffiBind.sessionRegisterTexture(sessionId: sessionId, ptr: ptr);
+  int getRgbaSize(SessionID sessionId, int display) =>
+      _ffiBind.sessionGetRgbaSize(sessionId: sessionId, display: display);
+  void nextRgba(SessionID sessionId, int display) =>
+      _ffiBind.sessionNextRgba(sessionId: sessionId, display: display);
+  void registerPixelbufferTexture(SessionID sessionId, int display, int ptr) =>
+      _ffiBind.sessionRegisterPixelbufferTexture(
+          sessionId: sessionId, display: display, ptr: ptr);
+  void registerGpuTexture(SessionID sessionId, int display, int ptr) =>
+      _ffiBind.sessionRegisterGpuTexture(
+          sessionId: sessionId, display: display, ptr: ptr);
 
   /// Init the FFI class, loads the native Rust core library.
   Future<void> init(String appType) async {
@@ -117,7 +122,7 @@ class PlatformFFI {
                     : DynamicLibrary.process();
     debugPrint('initializing FFI $_appType');
     try {
-      _session_get_rgba = dylib.lookupFunction<F3, F3>("session_get_rgba");
+      _session_get_rgba = dylib.lookupFunction<F3Dart, F3>("session_get_rgba");
       try {
         // SYSTEM user failed
         _dir = (await getApplicationDocumentsDirectory()).path;
@@ -125,6 +130,7 @@ class PlatformFFI {
         debugPrint('Failed to get documents directory: $e');
       }
       _ffiBind = RustdeskImpl(dylib);
+
       if (Platform.isLinux) {
         // Start a dbus service, no need to await
         _ffiBind.mainStartDbusServer();
@@ -153,10 +159,10 @@ class PlatformFFI {
         AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
         name = '${androidInfo.brand}-${androidInfo.model}';
         id = androidInfo.id.hashCode.toString();
-        androidVersion = androidInfo.version.sdkInt ?? 0;
+        androidVersion = androidInfo.version.sdkInt;
       } else if (Platform.isIOS) {
         IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
-        name = iosInfo.utsname.machine ?? '';
+        name = iosInfo.utsname.machine;
         id = iosInfo.identifierForVendor.hashCode.toString();
       } else if (Platform.isLinux) {
         LinuxDeviceInfo linuxInfo = await deviceInfo.linuxInfo;

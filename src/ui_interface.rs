@@ -2,14 +2,15 @@
 use hbb_common::password_security;
 use hbb_common::{
     allow_err,
-    config::{self, Config, LocalConfig, PeerConfig},
-    directories_next, log, tokio,
-};
-use hbb_common::{
     bytes::Bytes,
-    config::{CONNECT_TIMEOUT, RENDEZVOUS_PORT},
+    config::{
+        self, Config, LocalConfig, PeerConfig, CONNECT_TIMEOUT, HARD_SETTINGS, RENDEZVOUS_PORT,
+    },
+    directories_next,
     futures::future::join_all,
+    log,
     rendezvous_proto::*,
+    tokio,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::{
@@ -17,9 +18,10 @@ use hbb_common::{
     tokio::{sync::mpsc, time},
 };
 use serde_derive::Serialize;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use std::process::Child;
 use std::{
     collections::HashMap,
-    process::Child,
     sync::{Arc, Mutex},
 };
 
@@ -31,6 +33,7 @@ use crate::ipc;
 
 type Message = RendezvousMessage;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub type Children = Arc<Mutex<(bool, HashMap<(String, String), Child>)>>;
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,6 +143,14 @@ pub fn get_license() -> String {
 }
 
 #[inline]
+pub fn refresh_options() {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        *OPTIONS.lock().unwrap() = Config::get_options();
+    }
+}
+
+#[inline]
 pub fn get_option<T: AsRef<str>>(key: T) -> String {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -159,6 +170,16 @@ pub fn get_option<T: AsRef<str>>(key: T) -> String {
 #[inline]
 pub fn get_local_option(key: String) -> String {
     LocalConfig::get_option(&key)
+}
+
+#[inline]
+pub fn get_hard_option(key: String) -> String {
+    config::HARD_SETTINGS
+        .read()
+        .unwrap()
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
 }
 
 #[inline]
@@ -236,12 +257,6 @@ pub fn set_peer_option(id: String, name: String, value: String) {
         c.options.insert(name, value);
     }
     c.store(&id);
-}
-
-#[inline]
-pub fn using_public_server() -> bool {
-    option_env!("RENDEZVOUS_SERVER").unwrap_or("").is_empty()
-        && crate::get_custom_rendezvous_server(get_option("custom-rendezvous-server")).is_empty()
 }
 
 #[inline]
@@ -422,14 +437,6 @@ pub fn is_installed() -> bool {
 }
 
 #[inline]
-pub fn is_rdp_service_open() -> bool {
-    #[cfg(windows)]
-    return is_installed() && crate::platform::windows::is_rdp_service_open();
-    #[cfg(not(windows))]
-    return false;
-}
-
-#[inline]
 pub fn is_share_rdp() -> bool {
     #[cfg(windows)]
     return crate::platform::windows::is_share_rdp();
@@ -594,7 +601,13 @@ pub fn current_is_wayland() -> bool {
 
 #[inline]
 pub fn get_new_version() -> String {
-    (*SOFTWARE_UPDATE_URL.lock().unwrap().rsplit('/').next().unwrap_or("")).to_string()
+    (*SOFTWARE_UPDATE_URL
+        .lock()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap_or(""))
+    .to_string()
 }
 
 #[inline]
@@ -822,11 +835,29 @@ pub fn has_hwcodec() -> bool {
     return true;
 }
 
+#[inline]
+pub fn has_gpucodec() -> bool {
+    cfg!(feature = "gpucodec")
+}
+
 #[cfg(feature = "flutter")]
 #[inline]
 pub fn supported_hwdecodings() -> (bool, bool) {
-    let decoding = scrap::codec::Decoder::supported_decodings(None);
-    (decoding.ability_h264 > 0, decoding.ability_h265 > 0)
+    let decoding = scrap::codec::Decoder::supported_decodings(None, true, None, &vec![]);
+    #[allow(unused_mut)]
+    let (mut h264, mut h265) = (decoding.ability_h264 > 0, decoding.ability_h265 > 0);
+    #[cfg(feature = "gpucodec")]
+    {
+        // supported_decodings check runtime luid
+        let gpu = scrap::gpucodec::GpuDecoder::possible_available_without_check();
+        if gpu.0 {
+            h264 = true;
+        }
+        if gpu.1 {
+            h265 = true;
+        }
+    }
+    (h264, h265)
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -999,12 +1030,18 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
     let mut mouse_time = 0;
     #[cfg(not(feature = "flutter"))]
     let mut id = "".to_owned();
-    #[cfg(target_os = "windows")]
+    #[cfg(any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            feature = "unix-file-copy-paste"
+        )
+    ))]
     let mut enable_file_transfer = "".to_owned();
 
     loop {
         if let Ok(mut c) = ipc::connect(1000, "").await {
-            let mut timer = time::interval(time::Duration::from_secs(1));
+            let mut timer = crate::rustdesk_interval(time::interval(time::Duration::from_secs(1)));
             loop {
                 tokio::select! {
                     res = c.next() => {
@@ -1022,7 +1059,13 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                 *OPTIONS.lock().unwrap() = v;
                                 *OPTION_SYNCED.lock().unwrap() = true;
 
-                                #[cfg(target_os="windows")]
+                                #[cfg(any(
+                                        target_os = "windows",
+                                        all(
+                                            any(target_os="linux", target_os = "macos"),
+                                            feature = "unix-file-copy-paste"
+                                            )
+                                        ))]
                                 {
                                     let b = OPTIONS.lock().unwrap().get("enable-file-transfer").map(|x| x.to_string()).unwrap_or_default();
                                     if b != enable_file_transfer {
@@ -1241,10 +1284,34 @@ async fn check_id(
 }
 
 // if it's relay id, return id processed, otherwise return original id
-pub fn handle_relay_id(id: String) -> String {
+pub fn handle_relay_id(id: &str) -> &str {
     if id.ends_with(r"\r") || id.ends_with(r"/r") {
-        id[0..id.len() - 2].to_string()
+        &id[0..id.len() - 2]
     } else {
         id
     }
+}
+
+pub fn support_remove_wallpaper() -> bool {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    return crate::platform::WallPaperRemover::support();
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    return false;
+}
+
+pub fn has_valid_2fa() -> bool {
+    let raw = get_option("2fa");
+    crate::auth_2fa::get_2fa(Some(raw)).is_some()
+}
+
+pub fn generate2fa() -> String {
+    crate::auth_2fa::generate2fa()
+}
+
+pub fn verify2fa(code: String) -> bool {
+    let res = crate::auth_2fa::verify2fa(code);
+    if res {
+        refresh_options();
+    }
+    res
 }

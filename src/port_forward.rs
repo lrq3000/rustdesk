@@ -75,7 +75,7 @@ pub async fn listen(
                         let interface = interface.clone();
                         tokio::spawn(async move {
                             if let Err(err) = run_forward(forward, stream).await {
-                               interface.msgbox("error", "Error", &err.to_string(), "");
+                                interface.msgbox("error", "Error", &err.to_string(), "");
                             }
                             log::info!("connection from {:?} closed", addr);
                        });
@@ -121,7 +121,6 @@ async fn connect_and_login(
     let (mut stream, direct, _pk) =
         Client::start(id, key, token, conn_type, interface.clone()).await?;
     interface.update_direct(Some(direct));
-    let mut interface = interface;
     let mut buffer = Vec::new();
     let mut received = false;
     loop {
@@ -142,8 +141,9 @@ async fn connect_and_login(
                         }
                         Some(message::Union::LoginResponse(lr)) => match lr.union {
                             Some(login_response::Union::Error(err)) => {
-                                interface.handle_login_error(&err);
-                                return Ok(None);
+                                if !interface.handle_login_error(&err) {
+                                    return Ok(None);
+                                }
                             }
                             Some(login_response::Union::PeerInfo(pi)) => {
                                 interface.handle_peer_info(pi);
@@ -168,6 +168,9 @@ async fn connect_and_login(
                 match d {
                     Some(Data::Login((os_username, os_password, password, remember))) => {
                         interface.handle_login_from_ui(os_username, os_password, password, remember, &mut stream).await;
+                    }
+                    Some(Data::Message(msg)) => {
+                        allow_err!(stream.send(&msg).await);
                     }
                     _ => {}
                 }

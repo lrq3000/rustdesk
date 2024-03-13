@@ -1,14 +1,14 @@
 use crate::{
-    codec::{base_bitrate, codec_thread_num, EncoderApi, EncoderCfg},
-    hw, ImageFormat, ImageRgb, HW_STRIDE_ALIGN,
+    codec::{base_bitrate, codec_thread_num, EncoderApi, EncoderCfg, Quality as Q},
+    hw, CodecFormat, EncodeInput, ImageFormat, ImageRgb, Pixfmt, HW_STRIDE_ALIGN,
 };
 use hbb_common::{
     allow_err,
-    anyhow::{anyhow, Context},
+    anyhow::{anyhow, bail, Context},
     bytes::Bytes,
     config::HwCodecConfig,
     log,
-    message_proto::{EncodedVideoFrame, EncodedVideoFrames, Message, VideoFrame},
+    message_proto::{EncodedVideoFrame, EncodedVideoFrames, VideoFrame},
     ResultType,
 };
 use hwcodec::{
@@ -29,9 +29,18 @@ const DEFAULT_GOP: i32 = i32::MAX;
 const DEFAULT_HW_QUALITY: Quality = Quality_Default;
 const DEFAULT_RC: RateControl = RC_DEFAULT;
 
+#[derive(Debug, Clone)]
+pub struct HwEncoderConfig {
+    pub name: String,
+    pub width: usize,
+    pub height: usize,
+    pub quality: Q,
+    pub keyframe_interval: Option<usize>,
+}
+
 pub struct HwEncoder {
     encoder: Encoder,
-    yuv: Vec<u8>,
+    name: String,
     pub format: DataFormat,
     pub pixfmt: AVPixelFormat,
     width: u32,
@@ -40,7 +49,7 @@ pub struct HwEncoder {
 }
 
 impl EncoderApi for HwEncoder {
-    fn new(cfg: EncoderCfg) -> ResultType<Self>
+    fn new(cfg: EncoderCfg, _i444: bool) -> ResultType<Self>
     where
         Self: Sized,
     {
@@ -64,7 +73,7 @@ impl EncoderApi for HwEncoder {
                     gop,
                     quality: DEFAULT_HW_QUALITY,
                     rc: DEFAULT_RC,
-                    thread_count: codec_thread_num() as _, // ffmpeg's thread_count is used for cpu
+                    thread_count: codec_thread_num(16) as _, // ffmpeg's thread_count is used for cpu
                 };
                 let format = match Encoder::format_from_name(config.name.clone()) {
                     Ok(format) => format,
@@ -78,29 +87,30 @@ impl EncoderApi for HwEncoder {
                 match Encoder::new(ctx.clone()) {
                     Ok(encoder) => Ok(HwEncoder {
                         encoder,
-                        yuv: vec![],
+                        name: config.name,
                         format,
                         pixfmt: ctx.pixfmt,
                         width: ctx.width as _,
                         height: ctx.height as _,
                         bitrate,
                     }),
-                    Err(_) => Err(anyhow!(format!("Failed to create encoder"))),
+                    Err(_) => {
+                        HwCodecConfig::clear();
+                        Err(anyhow!(format!("Failed to create encoder")))
+                    }
                 }
             }
             _ => Err(anyhow!("encoder type mismatch")),
         }
     }
 
-    fn encode_to_message(
-        &mut self,
-        frame: &[u8],
-        _ms: i64,
-    ) -> ResultType<hbb_common::message_proto::Message> {
-        let mut msg_out = Message::new();
+    fn encode_to_message(&mut self, input: EncodeInput, _ms: i64) -> ResultType<VideoFrame> {
         let mut vf = VideoFrame::new();
         let mut frames = Vec::new();
-        for frame in self.encode(frame).with_context(|| "Failed to encode")? {
+        for frame in self
+            .encode(input.yuv()?)
+            .with_context(|| "Failed to encode")?
+        {
             frames.push(EncodedVideoFrame {
                 data: Bytes::from(frame.data),
                 pts: frame.pts as _,
@@ -117,14 +127,41 @@ impl EncoderApi for HwEncoder {
                 DataFormat::H264 => vf.set_h264s(frames),
                 DataFormat::H265 => vf.set_h265s(frames),
             }
-            msg_out.set_video_frame(vf);
-            Ok(msg_out)
+            Ok(vf)
         } else {
             Err(anyhow!("no valid frame"))
         }
     }
 
-    fn use_yuv(&self) -> bool {
+    fn yuvfmt(&self) -> crate::EncodeYuvFormat {
+        let pixfmt = if self.pixfmt == AVPixelFormat::AV_PIX_FMT_NV12 {
+            Pixfmt::NV12
+        } else {
+            Pixfmt::I420
+        };
+        let stride = self
+            .encoder
+            .linesize
+            .clone()
+            .drain(..)
+            .map(|i| i as usize)
+            .collect();
+        crate::EncodeYuvFormat {
+            pixfmt,
+            w: self.encoder.ctx.width as _,
+            h: self.encoder.ctx.height as _,
+            stride,
+            u: self.encoder.offset[0] as _,
+            v: if pixfmt == Pixfmt::NV12 {
+                0
+            } else {
+                self.encoder.offset[1] as _
+            },
+        }
+    }
+
+    #[cfg(feature = "gpucodec")]
+    fn input_texture(&self) -> bool {
         false
     }
 
@@ -141,6 +178,10 @@ impl EncoderApi for HwEncoder {
     fn bitrate(&self) -> u32 {
         self.bitrate
     }
+
+    fn support_abr(&self) -> bool {
+        !self.name.contains("qsv")
+    }
 }
 
 impl HwEncoder {
@@ -151,29 +192,8 @@ impl HwEncoder {
         })
     }
 
-    pub fn encode(&mut self, bgra: &[u8]) -> ResultType<Vec<EncodeFrame>> {
-        match self.pixfmt {
-            AVPixelFormat::AV_PIX_FMT_YUV420P => hw::hw_bgra_to_i420(
-                self.encoder.ctx.width as _,
-                self.encoder.ctx.height as _,
-                &self.encoder.linesize,
-                &self.encoder.offset,
-                self.encoder.length,
-                bgra,
-                &mut self.yuv,
-            ),
-            AVPixelFormat::AV_PIX_FMT_NV12 => hw::hw_bgra_to_nv12(
-                self.encoder.ctx.width as _,
-                self.encoder.ctx.height as _,
-                &self.encoder.linesize,
-                &self.encoder.offset,
-                self.encoder.length,
-                bgra,
-                &mut self.yuv,
-            ),
-        }
-
-        match self.encoder.encode(&self.yuv) {
+    pub fn encode(&mut self, yuv: &[u8]) -> ResultType<Vec<EncodeFrame>> {
+        match self.encoder.encode(yuv) {
             Ok(v) => {
                 let mut data = Vec::<EncodeFrame>::new();
                 data.append(v);
@@ -213,45 +233,43 @@ impl HwDecoder {
         })
     }
 
-    pub fn new_decoders() -> HwDecoders {
+    pub fn new(format: CodecFormat) -> ResultType<Self> {
+        log::info!("try create {format:?} ram decoder");
         let best = HwDecoder::best();
-        let mut h264: Option<HwDecoder> = None;
-        let mut h265: Option<HwDecoder> = None;
-        let mut fail = false;
-
-        if let Some(info) = best.h264 {
-            h264 = HwDecoder::new(info).ok();
-            if h264.is_none() {
-                fail = true;
+        let info = match format {
+            CodecFormat::H264 => {
+                if let Some(info) = best.h264 {
+                    info
+                } else {
+                    bail!("no h264 decoder, should not be here");
+                }
             }
-        }
-        if let Some(info) = best.h265 {
-            h265 = HwDecoder::new(info).ok();
-            if h265.is_none() {
-                fail = true;
+            CodecFormat::H265 => {
+                if let Some(info) = best.h265 {
+                    info
+                } else {
+                    bail!("no h265 decoder, should not be here");
+                }
             }
-        }
-        if fail {
-            check_config_process();
-        }
-        HwDecoders { h264, h265 }
-    }
-
-    pub fn new(info: CodecInfo) -> ResultType<Self> {
+            _ => bail!("unsupported format: {:?}", format),
+        };
         let ctx = DecodeContext {
             name: info.name.clone(),
             device_type: info.hwdevice.clone(),
-            thread_count: codec_thread_num() as _,
+            thread_count: codec_thread_num(16) as _,
         };
         match Decoder::new(ctx) {
             Ok(decoder) => Ok(HwDecoder { decoder, info }),
-            Err(_) => Err(anyhow!(format!("Failed to create decoder"))),
+            Err(_) => {
+                HwCodecConfig::clear();
+                Err(anyhow!(format!("Failed to create decoder")))
+            }
         }
     }
     pub fn decode(&mut self, data: &[u8]) -> ResultType<Vec<HwDecoderImage>> {
         match self.decoder.decode(data) {
             Ok(v) => Ok(v.iter().map(|f| HwDecoderImage { frame: f }).collect()),
-            Err(_) => Ok(vec![]),
+            Err(e) => Err(anyhow!(e)),
         }
     }
 }
@@ -280,7 +298,7 @@ impl HwDecoderImage<'_> {
                 &mut rgb.raw as _,
                 i420,
                 HW_STRIDE_ALIGN,
-            ),
+            )?,
             AVPixelFormat::AV_PIX_FMT_YUV420P => {
                 hw::hw_i420_to(
                     rgb.fmt(),
@@ -293,10 +311,10 @@ impl HwDecoderImage<'_> {
                     frame.linesize[1] as _,
                     frame.linesize[2] as _,
                     &mut rgb.raw as _,
-                );
-                return Ok(());
+                )?;
             }
         }
+        Ok(())
     }
 
     pub fn bgra(&self, bgra: &mut Vec<u8>, i420: &mut Vec<u8>) -> ResultType<()> {
@@ -326,7 +344,7 @@ fn get_config(k: &str) -> ResultType<CodecInfos> {
     }
 }
 
-pub fn check_config() {
+pub fn check_available_hwcodec() {
     let ctx = EncodeContext {
         name: String::from(""),
         width: 1920,
@@ -363,18 +381,19 @@ pub fn check_config() {
     log::error!("Failed to serialize codec info");
 }
 
-pub fn check_config_process() {
+pub fn hwcodec_new_check_process() {
     use std::sync::Once;
     let f = || {
         // Clear to avoid checking process errors
         // But when the program is just started, the configuration file has not been updated, and the new connection will read an empty configuration
+        // TODO: --server start multi times on windows startup, which will clear the last config and cause concurrent file writing
         HwCodecConfig::clear();
         if let Ok(exe) = std::env::current_exe() {
             if let Some(_) = exe.file_name().to_owned() {
                 let arg = "--check-hwcodec-config";
                 if let Ok(mut child) = std::process::Command::new(exe).arg(arg).spawn() {
-                    // wait up to 10 seconds
-                    for _ in 0..10 {
+                    // wait up to 30 seconds, it maybe slow on windows startup for poorly performing machines
+                    for _ in 0..30 {
                         std::thread::sleep(std::time::Duration::from_secs(1));
                         if let Ok(Some(_)) = child.try_wait() {
                             break;

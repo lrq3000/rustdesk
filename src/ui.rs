@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     iter::FromIterator,
-    process::Child,
     sync::{Arc, Mutex},
 };
 
@@ -22,7 +21,6 @@ mod cm;
 pub mod inline;
 pub mod remote;
 
-pub type Children = Arc<Mutex<(bool, HashMap<(String, String), Child>)>>;
 #[allow(dead_code)]
 type Status = (i32, bool, i64, String);
 
@@ -34,7 +32,6 @@ lazy_static::lazy_static! {
 #[cfg(not(any(feature = "flutter", feature = "cli")))]
 lazy_static::lazy_static! {
     pub static ref CUR_SESSION: Arc<Mutex<Option<Session<remote::SciterHandler>>>> = Default::default();
-    static ref CHILDREN : Children = Default::default();
 }
 
 struct UIHostHandler;
@@ -262,7 +259,7 @@ impl UI {
     }
 
     fn using_public_server(&self) -> bool {
-        using_public_server()
+        crate::using_public_server()
     }
 
     fn get_options(&self) -> Value {
@@ -326,10 +323,6 @@ impl UI {
         return true;
         #[cfg(debug_assertions)]
         return false;
-    }
-
-    fn is_rdp_service_open(&self) -> bool {
-        is_rdp_service_open()
     }
 
     fn is_share_rdp(&self) -> bool {
@@ -583,6 +576,10 @@ impl UI {
         has_hwcodec()
     }
 
+    fn has_gpucodec(&self) -> bool {
+        has_gpucodec()
+    }
+
     fn get_langs(&self) -> String {
         get_langs()
     }
@@ -592,11 +589,37 @@ impl UI {
     }
 
     fn handle_relay_id(&self, id: String) -> String {
-        handle_relay_id(id)
+        handle_relay_id(&id).to_owned()
     }
 
     fn get_login_device_info(&self) -> String {
         get_login_device_info_json()
+    }
+
+    fn support_remove_wallpaper(&self) -> bool {
+        support_remove_wallpaper()
+    }
+
+    fn has_valid_2fa(&self) -> bool {
+        has_valid_2fa()
+    }
+
+    fn generate2fa(&self) -> String {
+        generate2fa()
+    }
+
+    pub fn verify2fa(&self, code: String) -> bool {
+        verify2fa(code)
+    }
+
+    fn generate_2fa_img_src(&self, data: String) -> String {
+        let v = qrcode_generator::to_png_to_vec(data, qrcode_generator::QrCodeEcc::Low, 128)
+            .unwrap_or_default();
+        let s = hbb_common::sodiumoxide::base64::encode(
+            v,
+            hbb_common::sodiumoxide::base64::Variant::Original,
+        );
+        format!("data:image/png;base64,{s}")
     }
 }
 
@@ -634,7 +657,6 @@ impl sciter::EventHandler for UI {
         fn is_release();
         fn set_socks(String, String, String);
         fn get_socks();
-        fn is_rdp_service_open();
         fn is_share_rdp();
         fn set_share_rdp(bool);
         fn is_installed_lower_version();
@@ -679,10 +701,16 @@ impl sciter::EventHandler for UI {
         fn get_lan_peers();
         fn get_uuid();
         fn has_hwcodec();
+        fn has_gpucodec();
         fn get_langs();
         fn default_video_save_directory();
         fn handle_relay_id(String);
         fn get_login_device_info();
+        fn support_remove_wallpaper();
+        fn has_valid_2fa();
+        fn generate2fa();
+        fn generate_2fa_img_src(String);
+        fn verify2fa(String);
     }
 }
 

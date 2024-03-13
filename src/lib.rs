@@ -41,9 +41,10 @@ pub mod cli;
 #[cfg(not(any(target_os = "android", target_os = "ios", feature = "cli")))]
 pub mod core_main;
 mod lang;
-mod license;
+mod custom_server;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod port_forward;
+mod auth_2fa;
 
 #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -58,11 +59,10 @@ mod ui_session_interface;
 
 mod hbbs_http;
 
-#[cfg(windows)]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod clipboard_file;
 
-#[cfg(windows)]
-pub mod privacy_win_mag;
+pub mod privacy_mode;
 
 #[cfg(all(windows, feature = "virtual_display_driver"))]
 pub mod virtual_display_manager;

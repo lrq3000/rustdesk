@@ -27,14 +27,6 @@ A RustDesk szívesen fogad minden contributiont, támogatást mindenkitől. Lás
     alt="Get it on F-Droid"
     height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
 
-## Ingyenes publikus szerverek
-
-Ezalatt az üzenet alatt találhatóak azok a publikus szerverek, amelyeket ingyen használhatsz. Ezek a szerverek változhatnak a jövőben, illetve a hálózatuk lehet hogy lassú lehet.
-| Hely | Host | Specifikáció |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
-
 ## Dependencies
 
 Az asztali verziók [sciter](https://sciter.com/)-t használnak a GUI-hoz, kérlek telepítsd a dynamikus könyvtárat magad.
@@ -115,10 +107,6 @@ wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/lib
 mv libsciter-gtk.so target/debug
 VCPKG_ROOT=$HOME/vcpkg cargo run
 ```
-
-### Válts Wayland-ról X11-re (Xorg)
-
-A RustDesk nem támogatja a Waylendet. [Itt](https://docs.fedoraproject.org/en-US/quick-docs/configuring-xorg-as-default-gnome-session/) található egy tutorial amelynek segítségével beállíthatod a Xorg-ot mint alap GNOME session.
 
 ## Hogyan építs Dockerrel
 

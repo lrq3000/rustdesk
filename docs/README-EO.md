@@ -19,14 +19,6 @@ RustDesk bonvenigas kontribuon de ĉiuj. Vidu [`docs/CONTRIBUTING.md`](CONTRIBUT
 
 [**BINARA ELŜUTO**](https://github.com/rustdesk/rustdesk/releases)
 
-## Senpagaj publikaj serviloj
-
-Malsupre estas la serviloj, kiuj vi uzas senpage, ĝi povas ŝanĝi laŭlonge de la tempo. Se vi ne estas proksima de unu de tiuj, via reto povas esti malrapida.
-| Situo | Vendanto | Detaloj |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
-
 ## Dependantaĵoj
 
 La labortabla versio uzas [sciter](https://sciter.com/) por la interfaco, bonvolu elŝuti la bibliotekon dinamikan sciter.
@@ -103,10 +95,6 @@ wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/lib
 mv libsciter-gtk.so target/debug
 VCPKG_ROOT=$HOME/vcpkg cargo run
 ```
-
-### Ŝanĝi Wayland por X11 (Xorg)
-
-RustDesk ne subtenas Wayland. Kontrolu [tion](https://docs.fedoraproject.org/en-US/quick-docs/configuring-xorg-as-default-gnome-session/) por agordi Xorg kiel defaŭlta sesio GNOME.
 
 ## Kiel kompili kun Docker
 

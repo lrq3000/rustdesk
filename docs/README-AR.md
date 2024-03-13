@@ -27,14 +27,6 @@
 
 [**BINARY تنزيل**](https://github.com/rustdesk/rustdesk/releases)
 
-## خوادم مفتوحة ومجانية
-
-فيما يلي الخوادم التي تستخدمها مجانًا، وقد تتغير طوال الوقت. إذا لم تكن قريبًا من أحد هؤلاء، فقد تكون شبكتك بطيئة.
-| الموقع | المورد | المواصفات |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4 GB RAM |
-
 ## التبعيات
 
  لواجهة المستخدم الرسومية [sciter](https://sciter.com/) نسخة سطح المكتب تستخدم
@@ -117,10 +109,6 @@ wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/lib
 mv libsciter-gtk.so target/debug
 VCPKG_ROOT=$HOME/vcpkg cargo run
 ```
-
-###  X11 (Xorg) إلى Wayland تغيير
-
-افتراضية GNOME session  ك Xorg إتبع [هذه](https://docs.fedoraproject.org/en-US/quick-docs/configuring-xorg-as-default-gnome-session/) الخطوات لإعداد Wayland لا تدعم RustDesk
 
 ## Docker طريقة البناء باستخدام
 

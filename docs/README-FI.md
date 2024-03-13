@@ -19,14 +19,6 @@ RustDesk toivottaa avustukset tervetulleiksi kaikilta. Katso lisätietoja [`docs
 
 [**BINAARILATAUS**](https://github.com/rustdesk/rustdesk/releases)
 
-## Vapaita julkisia palvelimia
-
-Alla on palvelimia, joita voit käyttää ilmaiseksi, ne saattavat muuttua ajan mittaan. Jos et ole lähellä yhtä näistä, verkkosi voi olla hidas.
-| Sijainti | Myyjä | Määrittely |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
-
 ## Riippuvuudet
 
 Desktop-versiot käyttävät [sciter](https://sciter.com/) graafisena käyttöliittymänä, lataa sciter-dynaaminen kirjasto itsellesi.
@@ -103,10 +95,6 @@ wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/lib
 mv libsciter-gtk.so target/debug
 VCPKG_ROOT=$HOME/vcpkg cargo run
 ```
-
-### Vaihda Wayland-ympäristö X11 (Xorg)-ympäristöön
-
-RustDesk ei tue Waylandia. Tarkista [tämä](https://docs.fedoraproject.org/en-US/quick-docs/configuring-xorg-as-default-gnome-session/) asettamalla Xorg oletus GNOME-istuntoon.
 
 ## Kuinka rakennetaan Dockerin kanssa
 

@@ -30,8 +30,7 @@ struct Delay {
 
 #[derive(Default, Debug, Copy, Clone)]
 struct UserData {
-    full_speed_fps: Option<u32>,
-    auto_adjust_fps: Option<u32>,
+    auto_adjust_fps: Option<u32>, // reserve for compatibility
     custom_fps: Option<u32>,
     quality: Option<(i64, Quality)>, // (time, quality)
     delay: Option<Delay>,
@@ -44,6 +43,7 @@ pub struct VideoQoS {
     quality: Quality,
     users: HashMap<i32, UserData>,
     bitrate_store: u32,
+    support_abr: HashMap<usize, bool>,
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -81,6 +81,7 @@ impl Default for VideoQoS {
             quality: Default::default(),
             users: Default::default(),
             bitrate_store: 0,
+            support_abr: Default::default(),
         }
     }
 }
@@ -119,25 +120,19 @@ impl VideoQoS {
         self.users.iter().any(|u| u.1.record)
     }
 
-    pub fn abr_enabled() -> bool {
-        "N" != Config::get_option("enable-abr")
+    pub fn set_support_abr(&mut self, display_idx: usize, support: bool) {
+        self.support_abr.insert(display_idx, support);
     }
 
     pub fn refresh(&mut self, typ: Option<RefreshType>) {
         // fps
         let user_fps = |u: &UserData| {
-            // full_speed_fps
-            let mut fps = u.full_speed_fps.unwrap_or_default() * 9 / 10;
+            // custom_fps
+            let mut fps = u.custom_fps.unwrap_or(FPS);
             // auto adjust fps
             if let Some(auto_adjust_fps) = u.auto_adjust_fps {
                 if fps == 0 || auto_adjust_fps < fps {
                     fps = auto_adjust_fps;
-                }
-            }
-            // custom_fps
-            if let Some(custom_fps) = u.custom_fps {
-                if fps == 0 || custom_fps < fps {
-                    fps = custom_fps;
                 }
             }
             // delay
@@ -183,7 +178,9 @@ impl VideoQoS {
         let mut quality = latest_quality;
 
         // network delay
-        if Self::abr_enabled() && typ != Some(RefreshType::SetImageQuality) {
+        let abr_enabled =
+            Config::get_option("enable-abr") != "N" && self.support_abr.iter().all(|e| *e.1);
+        if abr_enabled && typ != Some(RefreshType::SetImageQuality) {
             // max delay
             let delay = self
                 .users
@@ -257,21 +254,6 @@ impl VideoQoS {
                 id,
                 UserData {
                     custom_fps: Some(fps),
-                    ..Default::default()
-                },
-            );
-        }
-        self.refresh(None);
-    }
-
-    pub fn user_full_speed_fps(&mut self, id: i32, full_speed_fps: u32) {
-        if let Some(user) = self.users.get_mut(&id) {
-            user.full_speed_fps = Some(full_speed_fps);
-        } else {
-            self.users.insert(
-                id,
-                UserData {
-                    full_speed_fps: Some(full_speed_fps),
                     ..Default::default()
                 },
             );
